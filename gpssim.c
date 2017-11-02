@@ -106,6 +106,13 @@ void subVect(double *y, const double *x1, const double *x2)
 	return;
 }
 
+
+double round(double number)
+{
+    return number < 0.0 ? ceil(number - 0.5) : floor(number + 0.5);
+}
+
+
 /*! \brief Compute Norm of Vector
  *  \param[in] x Input vector
  *  \returns Length (Norm) of the input vector
@@ -1660,7 +1667,7 @@ void usage(void)
 		"  -b <iq_bits>     I/Q data format [1/8/16] (default: 16)\n"
 		"  -i               Disable ionospheric delay for spacecraft scenario\n"
 		"  -v               Show details about simulated channels\n",
-		((double)USER_MOTION_SIZE) / 10.0, STATIC_MAX_DURATION);
+		((double)USER_MOTION_SIZE) / (1.0/UPDATE_INTERVAL), STATIC_MAX_DURATION);
 
 	return;
 }
@@ -1670,6 +1677,9 @@ int main(int argc, char *argv[])
 	clock_t tstart,tend;
 
 	FILE *fp;
+#ifdef _DEBUG
+	FILE *fpDebugPrange, *fpDebugDoppler;  // output pseudorange and Doppler shift to file
+#endif
 
 	int sv;
 	int neph,ieph;
@@ -1739,7 +1749,7 @@ int main(int argc, char *argv[])
 	data_format = SC16;
 	g0.week = -1; // Invalid start time
 	iduration = USER_MOTION_SIZE;
-	duration = (double)iduration/10.0; // Default duration
+	duration = (double)iduration/(1.0/UPDATE_INTERVAL); // Default duration
 	verb = FALSE;
 	ionoutc.enable = TRUE;
 
@@ -1856,17 +1866,17 @@ int main(int argc, char *argv[])
 		llh[2] = 10.0;
 	}
 
-	if (duration<0.0 || (duration>((double)USER_MOTION_SIZE)/10.0 && !staticLocationMode) || (duration>STATIC_MAX_DURATION && staticLocationMode))
+	if (duration<0.0 || (duration>((double)USER_MOTION_SIZE)/(1.0/UPDATE_INTERVAL) && !staticLocationMode) || (duration>STATIC_MAX_DURATION && staticLocationMode))
 	{
 		printf("ERROR: Invalid duration.\n");
 		exit(1);
 	}
-	iduration = (int)(duration*10.0 + 0.5);
+	iduration = (int)(duration*(1.0/UPDATE_INTERVAL) + 0.5);
 
 	// Buffer size	
-	samp_freq = floor(samp_freq/10.0);
-	iq_buff_size = (int)samp_freq; // samples per 0.1sec
-	samp_freq *= 10.0;
+	samp_freq = floor(samp_freq/(1.0/UPDATE_INTERVAL));
+	iq_buff_size = (int)samp_freq; // samples per UPDATE_INTERVAL sec
+	samp_freq *= (1.0/UPDATE_INTERVAL);
 
 	delt = 1.0/samp_freq;
 
@@ -2022,7 +2032,7 @@ int main(int argc, char *argv[])
 
 	printf("Start time = %4d/%02d/%02d,%02d:%02d:%02.0f (%d:%.0f)\n", 
 		t0.y, t0.m, t0.d, t0.hh, t0.mm, t0.sec, g0.week, g0.sec);
-	printf("Duration = %.1f [sec]\n", ((double)numd)/10.0);
+	printf("Duration = %.1f [sec]\n", ((double)numd)/(1.0/UPDATE_INTERVAL));
 
 	// Select the current set of ephemerides
 	ieph = -1;
@@ -2090,6 +2100,18 @@ int main(int argc, char *argv[])
 		printf("ERROR: Failed to open output file.\n");
 		exit(1);
 	}
+#ifdef _DEBUG
+	if (NULL==(fpDebugPrange=fopen("DebugPrange.txt","wt")))
+	{
+		printf("ERROR: Failed to open output file DebugPrange.txt.\n");
+		exit(1);
+	}
+	if (NULL==(fpDebugDoppler=fopen("DebugDoppler.txt","wt")))
+	{
+		printf("ERROR: Failed to open output file DebugDoppler.txt.\n");
+		exit(1);
+	}
+#endif
 
 	////////////////////////////////////////////////////////////
 	// Initialize channels
@@ -2130,7 +2152,7 @@ int main(int argc, char *argv[])
 	tstart = clock();
 
 	// Update receiver time
-	grx = incGpsTime(grx, 0.1);
+	grx = incGpsTime(grx, UPDATE_INTERVAL);
 
 	for (iumd=1; iumd<numd; iumd++)
 	{
@@ -2147,13 +2169,19 @@ int main(int argc, char *argv[])
 					computeRange(&rho, eph[ieph][sv], &ionoutc, grx, xyz[iumd]);
 				else
 					computeRange(&rho, eph[ieph][sv], &ionoutc, grx, xyz[0]);
+#ifdef _DEBUG
+				fprintf(fpDebugPrange, "%f, %d, %f, %f, \n", subGpsTime(grx, g0), chan[i].prn, rho.d, rho.range);	// output pseudorange
+#endif
 
 				chan[i].azel[0] = rho.azel[0];
 				chan[i].azel[1] = rho.azel[1];
 
 				// Update code phase and data bit counters
-				computeCodePhase(&chan[i], rho, 0.1);
+				computeCodePhase(&chan[i], rho, UPDATE_INTERVAL);
 				chan[i].carr_phasestep = (int)(512 * 65536.0 * chan[i].f_carr * delt);
+#ifdef _DEBUG
+				fprintf(fpDebugDoppler, "%f, %d, %f,\n", subGpsTime(grx, g0), chan[i].prn, chan[i].f_carr);			// output Doppler shift
+#endif
 
 				// Path loss
 				path_loss = 20200000.0/rho.d;
@@ -2259,7 +2287,7 @@ int main(int argc, char *argv[])
 		// Update navigation message and channel allocation every 30 seconds
 		//
 
-		igrx = (int)(grx.sec*10.0+0.5);
+		igrx = (int)(grx.sec*(1.0/UPDATE_INTERVAL)+0.5);
 
 		if (igrx%300==0) // Every 30 seconds
 		{
@@ -2313,7 +2341,7 @@ int main(int argc, char *argv[])
 		}
 
 		// Update receiver time
-		grx = incGpsTime(grx, 0.1);
+		grx = incGpsTime(grx, UPDATE_INTERVAL);
 
 		// Update time counter
 		printf("\rTime into run = %4.1f", subGpsTime(grx, g0));
@@ -2329,6 +2357,10 @@ int main(int argc, char *argv[])
 
 	// Close file
 	fclose(fp);
+#ifdef _DEBUG
+	fclose(fpDebugDoppler);
+	fclose(fpDebugPrange);
+#endif
 
 	// Process time
 	printf("Process time = %.1f [sec]\n", (double)(tend-tstart)/CLOCKS_PER_SEC);

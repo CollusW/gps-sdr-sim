@@ -63,6 +63,8 @@
 #define SPEED_OF_LIGHT 2.99792458e8
 #define LAMBDA_L1 0.190293672798365
 
+#define UPDATE_INTERVAL (0.2)  // parameter (pseudorange, doppler frequency, etc.) update time interval.
+
 /*! \brief GPS L1 Carrier frequency */
 #define CARR_FREQ (1575.42e6)
 /*! \brief C/A code frequency */
@@ -75,6 +77,9 @@
 #define SC16 (16)
 
 #define EPHEM_ARRAY_SIZE (13) // for daily GPS broadcast ephemers file (brdc)
+
+// Debug switch
+#define _DEBUG
 
 /*! \brief Structure representing GPS time */
 typedef struct
